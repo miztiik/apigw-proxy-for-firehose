@@ -212,7 +212,8 @@ Thank you for your interest in contributing to our project. Whether it is a bug 
 
 ### 📚 References
 
-1. [AWS Docs: EMR][1]
+1. [AWS Blog: TLS Update][1]
+2. [AWS Docs: API Mappings][2]
 
 ### 🏷️ Metadata
 
