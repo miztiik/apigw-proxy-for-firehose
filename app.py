@@ -3,26 +3,51 @@ import os
 
 import aws_cdk as cdk
 
-from apigw_proxy_for_firehose.apigw_proxy_for_firehose_stack import ApigwProxyForFirehoseStack
+from stacks.back_end.s3_stack.s3_stack import S3Stack
+from stacks.back_end.firehose_stack.firehose_stack import FirehoseStack
+from stacks.back_end.apigw_proxy_for_firehose_stack.apigw_proxy_for_firehose_stack import ApiGwProxyForFirehoseStack
 
 
 app = cdk.App()
-ApigwProxyForFirehoseStack(app, "ApigwProxyForFirehoseStack",
-    # If you don't specify 'env', this stack will be environment-agnostic.
-    # Account/Region-dependent features and context lookups will not work,
-    # but a single synthesized template can be deployed anywhere.
 
-    # Uncomment the next line to specialize this stack for the AWS Account
-    # and Region that are implied by the current CLI configuration.
+# S3 Bucket to hold our sales events
+sales_events_bkt_stack = S3Stack(
+    app,
+    # f"{app.node.try_get_context('project')}-sales-events-bkt-stack",
+    f"sales-events-bkt-stack",
+    stack_log_level="INFO",
+    description="Miztiik Automation: S3 Bucket to hold our sales events"
+)
 
-    #env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
 
-    # Uncomment the next line if you know exactly what Account and Region you
-    # want to deploy the stack to. */
+# Kinesis Firehose Stack
+firehose_stack = FirehoseStack(
+    app,
+    # f"{app.node.try_get_context('project')}-job-stack",
+    f"firehose-stack",
+    stack_log_level="INFO",
+    sales_evnt_bkt=sales_events_bkt_stack.data_bkt,
+    description="Miztiik Automation: Kinesis Firehose Stack"
+)
 
-    #env=cdk.Environment(account='123456789012', region='us-east-1'),
+ApiGwProxyForFirehoseStack = ApiGwProxyForFirehoseStack(
+    app,
+    # f"{app.node.try_get_context('project')}-job-stack",
+    f"apigw-proxy-for-firehose-stack",
+    stack_log_level="INFO",
+    back_end_api_name="firehose-proxy-api",
+    fh_stream=firehose_stack.get_fh_stream,
+    description="Miztiik Automation: Kinesis Firehose Stack"
+)
 
-    # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
-    )
+
+# Stack Level Tagging
+_tags_lst = app.node.try_get_context("tags")
+
+if _tags_lst:
+    for _t in _tags_lst:
+        for k, v in _t.items():
+            cdk.Tags.of(app).add(
+                k, v, apply_to_launched_instances=True, priority=300)
 
 app.synth()
