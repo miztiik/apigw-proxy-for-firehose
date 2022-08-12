@@ -3,7 +3,7 @@
 Event-driven architectural pattern is used by the developers at Mystique Unicorn to process streaming data. For example, An application running in a set-top-box(STD) can ingests a streams of events for video quality,  network latency and STB uptime etc. A security audit found out the stream ingestion endpoints used by the application supports TLS ciphers `1.0` and `1.1`. The developers are looking for solutions to mitigate this issue.
 
 Can you show help them?
-**https://www.opensourceagenda.com/projects/5gc-apis**
+
 ## 🎯 Solutions
 
 Mystique unicorn is running an architecture similar to the one shown here.
@@ -96,11 +96,11 @@ In this blog, I will show you how to setup this architecture and test the suppor
      After successfully deploying the stack, Check the `Outputs` section of the stack for the firehose delivery stream name and Arn. 
 
    - **Stack: apigw-proxy-for-firehose-stack**
-     This stack will create an API with AWS Integration. The important configurations are in the Integration Request and Response.
+     This stack will create an API with AWS Integration. The important configurations are in the Integration Request and Response. The Cfn template configure the API action for kinesis firehose to 'PutRecord'.
 
      - **Integration Request**:
         1. Add header `Content-Type` with value `'application/x-amz-json-1.1'`
-        2. Add a request template for `application/json`. The value is an Apache Velocity Template(VTL) structure. In this demo, we will use a simple even payload with two keys `DeliveryStreamName` and `Data`. Kinesis expects the records to be base64 encoded. We could handle that in VTL, but to simply things, We will do that in the client side. The Value in this demo looks like this,
+        1. Add a request template for `application/json`. The value is an Apache Velocity Template(VTL) structure. In this demo, we will use a simple even payload with two keys `DeliveryStreamName` and `Data`. Kinesis expects the records to be base64 encoded. We could handle that in VTL, but to simply things, We will do that in the client side. The Value in this demo looks like this,
 
             ```vtl
             #set($inputRoot = $input.path('$'))
@@ -109,10 +109,13 @@ In this blog, I will show you how to setup this architecture and test the suppor
                 "Record": {"Data": "$inputRoot.Data"}
             }
             ```
+        
 
      - **Integration Response**:
        1. We will add a successful response code `200` with this template `"application/json": ""`
        2. You can consider adding catch all response for `4xx` and `5xx` error codes
+
+      ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_003.png)
 
      Initiate the deployment with the following command,
 
@@ -124,57 +127,54 @@ In this blog, I will show you how to setup this architecture and test the suppor
 
    - **Configure Custom Domain for API**
   
-     This is the tricky bits of the solution. 
+     This is the tricky bits of the solution. You will need a domain in route 53. This will allow us to create a custom subdomain that will be used to proxy our API Gateway. In my case, i have created `A` record `firehose.miztiik.in` to point to my API Gateway. I have also configured ACM for that domain.
 
+     Next step is to create a API GW custom domain, Ensure you select `TLS1.2` for your domain. Now lets create route mapping to our stage[2]. This took some time to get it right. 
+     ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_004.png)
+
+     Now we are all set to test our API.
 
 5. ## 🔬 Testing the solution
 
-   1. **Run EMR Job on EKS**
+   1. **Insert Record to Kinesis**
 
-      There are many ways of submitting job to your EMR cluster, here we will use the CLI to submit a job using the built-in sample driver.
+      We should be able to use our custom domain name url to insert records to our kinesis firehose. You can use a tool like Postman or cURL to insert kinesis record. _Remember that kinesis expects the data to be base64 encoded._ The inserted record should be stored as
+      ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_005.png)
 
-      You will need the output values from previous stacks and update these variables `VIRTUAL_CLUSTER_ID`, `EMR_EXECUTION_ROLE_ARN` and `s3DemoBucket`
+      If you naviagate to the s3 bucket and use S3 Select, you should be able to find the newly inserted record.
+      ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_006.png)
+
+      If you are planning to use CLI
 
       ```bash
-      ~$ dig caa firehose.miztiik.in
+        curl --location --request POST 'https://firehose.miztiik.in/fh' \
+          --header 'Content-Type: application/json' \
+          --data-raw '{
+              "DeliveryStreamName": "firehose-proxy",
+              "Data": "SGVsbG8gZnJvbSBNaXp0aWlrIHRvIFdvcmxkMg=="
+          }'
       ```
 
       Expected output,
 
       ```bash
-      ; <<>> DiG 9.10.6 <<>> caa firehose.miztiik.in
-      ;; global options: +cmd
-      ;; Got answer:
-      ;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 22570
-      ;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
-
-      ;; OPT PSEUDOSECTION:
-      ; EDNS: version: 0, flags:; udp: 1232
-      ;; QUESTION SECTION:
-      ;firehose.miztiik.in.		IN	CAA
-
-      ;; ANSWER SECTION:
-      firehose.miztiik.in.	300	IN	CAA	0 issue "firehose.miztiik.in"
-
-      ;; Query time: 63 msec
-      ;; SERVER: 1.1.1.1#53(1.1.1.1)
-      ;; WHEN: Fri Feb 25 16:10:07 CET 2022
-      ;; MSG SIZE  rcvd: 86
+      {
+        "Encrypted" : false,
+        "RecordId" : "G7FSnFt8z9LXw+XPcBXXuSzsw2+/elTSaP0OuGxUMe5bnGefYn4A9DmBZLPeqZCgkcb9dqk3lk5xi0PnQD6pSttUa6ldSTsLpz+eLfGPHQQr5TgOxJ/qYG/g4ePxSt3CfBVptftdJBRTQShDE3r6SdvyDGAo53g++15LAhfZXpw9pWeakxCNhkF/grRDWnoFvhRdgUiS43uKvmpgezdWD8rfKgGS2UoU"
+      }
       ```
 
-      Verify all the services have been installed correctly and running,
+      You can use a site like `https://www.ssllabs.com/` to check TLS version supported,
 
-      ```bash
-      kubectl -n istio-system get svc
-      ```
+      ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_007.png)
 
-      After couple of minutes(as this job is super simple), you check out the logs or EMR dashboard. You will find the job history and the status of the job.
+      ![Miztiik Automaton: API Gateway Proxy for Kinesis Firehose](images/miztiik_automation_apigw-proxy-for-firehose_architecture_008.png)
 
-      ![Miztiik Automaton: Kubernetes(EKS) - Big data workflows(EMR) on EKS](images/miztiik_automation_emr_on_eks_architecture_002.png)
+      
 
 6. ## 📒 Conclusion
 
-Here we have demonstrated how to use EMR in EKS. You can extend this by running your EMR job on Fargate or triggering the job through step functions or Apache Airflow.
+That is how we use API GW to proxy kinesis Firehose and enforce `TLS1.2`.
 
 1. ## 🧹 CleanUp
 
@@ -200,7 +200,7 @@ This is not an exhaustive list, please carry out other necessary steps as maybe 
 
 ## 📌 Who is using this
 
-This repository aims to show how to setup EMR on EKS to new developers, Solution Architects & Ops Engineers in AWS. Based on that knowledge these Udemy [course #1][102], [course #2][101] helps you build complete architecture in AWS.
+This repository aims to show how to setup API GW as a proxy for AWS APIs to new developers, Solution Architects & Ops Engineers in AWS. Based on that knowledge these Udemy [course #1][102], [course #2][101] helps you build complete architecture in AWS.
 
 ### 💡 Help/Suggestions or 🐛 Bugs
 
@@ -220,7 +220,8 @@ Thank you for your interest in contributing to our project. Whether it is a bug 
 
 **Level**: 200
 
-[1]: https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/emr-eks.html
+[1]: https://aws.amazon.com/blogs/security/tls-1-2-required-for-aws-endpoints/
+[2]: https://docs.aws.amazon.com/apigateway/latest/developerguide/rest-api-mappings.html
 [100]: https://www.udemy.com/course/aws-cloud-security/?referralCode=B7F1B6C78B45ADAF77A9
 [101]: https://www.udemy.com/course/aws-cloud-security-proactive-way/?referralCode=71DC542AD4481309A441
 [102]: https://www.udemy.com/course/aws-cloud-development-kit-from-beginner-to-professional/?referralCode=E15D7FB64E417C547579
